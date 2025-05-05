@@ -1,0 +1,32 @@
+#include <LiquidCrystal.h>
+LiquidCrystal lcd(0, 14, 21, 20, 19, 18); //declare LCD, RS, enable,d4, d5, d6, d7)
+
+void setup() {
+  // put your setup code here, to run once:
+  Serial.begin(115200);
+  Serial.setTimeout(100);
+  lcd.begin(16, 2);
+  lcd.clear();  
+  pinMode(LED_BUILTIN, OUTPUT); //lets me see when the pico is on, since its upside down.
+
+}
+
+void loop() {
+  int data_disp;
+  
+  digitalWrite(LED_BUILTIN, HIGH); 
+  // put your main code here, to run repeatedly:
+    if(Serial.available()){
+      switch(Serial.read()) {
+        case 'd': // display to LCD
+        {
+          lcd.clear();
+          data_disp = Serial.parseInt();
+          lcd.print(data_disp);       
+          lcd.print("cm");
+          delay(500);
+          break;
+        }
+    }
+    }
+}

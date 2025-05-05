@@ -1,0 +1,103 @@
+lidarport = "COM15";
+picoport = "COM18";
+baudRate = 115200;
+bytesPerMessage = 9;
+if ~exist("lidar","var")
+    lidar = serialport(lidarport, baudRate); %create serialport object for sensor LIDAR
+end
+if ~exist("pico","var")
+    pico = serialport(picoport, baudRate); %create pico object for displaying data from lidar. 
+end
+flush(lidar)
+pause(1)
+
+% Create Timer object
+lidarTimer = timer;
+lidarTimer.Period = 0.5; % Adjust flush interval (every 50ms)
+lidarTimer.ExecutionMode = 'fixedRate';
+lidarTimer.TimerFcn = @(~,~) flush(lidar); % Flush buffer
+
+% Start Timer
+start(lidarTimer);
+if ~exist('runBtn','var') || ~isvalid(runBtn)  % add the button once
+    runBtn = uicontrol('style','radiobutton','string','run', ...
+        'units','normalized','position',[.13 .94 .1 .04], ...
+        'Callback', 'SensorAnalysis'); 
+    % runs once
+    Sensordata.runOnce = true;
+end
+if ~exist('SendBtn','var') || ~isvalid(SendBtn)  % add the log button once
+    SendBtn = uicontrol('style','radiobutton','string','log/send', ...
+        'units','normalized','position',[.83 .94 .2 .04]);
+    % runs once
+end
+
+while runBtn.Value || Sensordata.runOnce == true
+Sensordata.logData = [];
+Sensordata.numSamp = 10;
+Sensordata.rawscan = zeros(Sensordata.numSamp, 7, 'uint8');
+try
+for i = 1:Sensordata.numSamp
+    %header and first bit are both always 89, so we find those, disregard
+    %and read the other 7 bytes of the 9 byte message. See above
+consecutiveHeader = false;
+
+    % Keep checking until two consecutive 89 values are received
+headerData = read(lidar, 2, "uint8");
+if all(headerData == 89)
+    consecutiveHeader = true;
+end
+while ~consecutiveHeader
+    if lidar.NumBytesAvailable >= 2
+        headerData = read(lidar, 2, "uint8");
+        if all(headerData == 89)
+            consecutiveHeader = true;
+        end
+    else
+        pause(0.001); % Brief wait to prevent hangs
+    end
+end
+
+Sensordata.rawscan(i, :) = read(lidar, 7, "uint8");
+
+
+
+end
+timePerByte = 1 / baudRate * 10 * 1e6; % Time per byte in microseconds (start bit + 8 data bits + stop bit)
+timePerMessage = timePerByte * bytesPerMessage; % Total time to transmit one message in microseconds
+Sensordata.totalDuration = timePerMessage * Sensordata.numSamp; % Total time for all samples in microseconds
+Sensordata.time = linspace(0, Sensordata.totalDuration / 1e6, Sensordata.numSamp)'; % Time vector in seconds
+Sensordata.distancel = Sensordata.rawscan(:, 1);
+Sensordata.distanceh = Sensordata.rawscan(:, 2);
+Sensordata.ampl = Sensordata.rawscan(:, 3);
+Sensordata.amph = Sensordata.rawscan(:, 4);
+Sensordata.templ = Sensordata.rawscan(:, 5);
+Sensordata.temph = Sensordata.rawscan(:, 6);
+%there are only 3 types of data, Distance, Amp, Chip Temperature, Amp is
+% signal strength/uncertainty, distance is distance from lidar to target,
+% and chip temp is the temperature of the sensor itself. 
+Sensordata.amp = bitshift(Sensordata.amph,8) + Sensordata.ampl;
+%Data is transmitted as 2 separate 8 bit numbers, Number_High and Number_Low which are combined by bitshifting high, 8 bits then adding together.
+
+Sensordata.distance = (bitshift(uint16(Sensordata.distanceh), 8) + uint16(Sensordata.distancel));
+Sensordata.chiptemp = bitshift(uint16(Sensordata.temph),8) + uint16(Sensordata.templ);
+Sensordata.chiptemp = (Sensordata.chiptemp / 8) -256;
+Sensordata.uncertainty = 3 ./ (1 + (Sensordata.amp / 500));
+catch
+        flush(lidar);
+        fprintf('*');
+        break;
+end
+
+plot(Sensordata.time, Sensordata.distance);
+    xlabel('ms'); ylabel('cm'); grid on; 
+    title('LIDAR Distance(cm) vs Time(ms)','FontSize',12);
+    displayfps;
+if(SendBtn.Value)
+    msg = sprintf("d %d\n", Sensordata.distance(end)); % Create formatted message
+    write(pico, msg, "string"); % Convert to bytes and send
+    Sensordata.logData(end+1) = Sensordata.distance(end);
+
+end
+Sensordata.runOnce = false;
+end
